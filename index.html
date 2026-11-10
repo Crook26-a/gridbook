@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v7";
+const APP_VERSION = "v8";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -1887,29 +1887,40 @@ function teamInGame(e, name) {
   const r = (e.box || []).find(x => canonName(x.player) === k);
   return r ? sideName(e, r.team) : "";
 }
-function primaryLine(p) {
-  const order = [["passing", "ATT"], ["rushing", "CAR"], ["receiving", "REC"], ["defense", "TKL"], ["kicking", "FGA"], ["punting", "PUNT"], ["returns", "KR"]];
+function primaryLine(p, side) {
+  const order = [["passing", "ATT"], ["rushing", "CAR"], ["receiving", "REC"], ["defense", "TKL"], ["kicking", "FGA"], ["punting", "PUNT"], ["returns", "KR"]].filter(([g]) => !side || side === "all" || SIDE_GROUPS[side].includes(g));
   let best = null, bv = 0;
   for (const [g, c] of order) { const v = PG(p, g, c) + (g === "defense" ? PG(p, g, "AST") + PG(p, g, "SCK") * 3 : 0) + (g === "kicking" ? PG(p, g, "XPA") : 0) + (g === "returns" ? PG(p, g, "PR") : 0); if (v > bv) { bv = v; best = g; } }
   return best ? lineFor(best, p.g[best]) : "";
 }
 
 // ── Stats view ────────────────────────────────────────────────────────
-const SV = { tab: "leaders", season: "all", level: "all", q: "", cmp: { a: { name: "", mode: "", season: "all" }, b: { name: "", mode: "", season: "all" } } };
+const SV = { tab: "leaders", side: "all", season: "all", level: "all", q: "", cmp: { a: { name: "", mode: "", season: "all" }, b: { name: "", mode: "", season: "all" } } };
 function seasonsIn(games) { return [...new Set(games.map(seasonOf).filter(Boolean))].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); }
 function statsGames() { return modeGames().filter(e => (SV.season === "all" || seasonOf(e) === SV.season) && (SV.level === "all" || e.level === SV.level)); }
+// Leader boards by side of the ball: [side, title, value(p), format, note]
+const SIDES = [["off", "🏈 Offense"], ["def", "🛡️ Defense"], ["st", "🦶 Special teams"]];
 const BOARDS = [
-  ["Passing yards", p => PG(p, "passing", "YDS")], ["Passing TDs", p => PG(p, "passing", "TD")],
-  ["Passer rating", p => PG(p, "passing", "ATT") >= 20 ? passerRating(PG(p, "passing", "CMP"), PG(p, "passing", "ATT"), PG(p, "passing", "YDS"), PG(p, "passing", "TD"), PG(p, "passing", "INT")) : null, f1, "min. 20 attempts"],
-  ["Rushing yards", p => PG(p, "rushing", "YDS")], ["Rushing TDs", p => PG(p, "rushing", "TD")],
-  ["Yards per carry", p => PG(p, "rushing", "CAR") >= 15 ? PG(p, "rushing", "YDS") / PG(p, "rushing", "CAR") : null, f1, "min. 15 carries"],
-  ["Receptions", p => PG(p, "receiving", "REC")], ["Receiving yards", p => PG(p, "receiving", "YDS")], ["Receiving TDs", p => PG(p, "receiving", "TD")],
-  ["Scrimmage yards", p => p.SCRIM], ["Total touchdowns", p => p.TOTTD], ["Fantasy points (PPR)", p => p.FPTS, f1],
-  ["Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST")], ["Sacks", p => PG(p, "defense", "SCK")], ["Interceptions", p => PG(p, "defense", "INT")], ["Forced fumbles", p => PG(p, "defense", "FF")],
-  ["Field goals made", p => PG(p, "kicking", "FGM")], ["Longest field goal", p => PG(p, "kicking", "LNG")],
-  ["Punting average", p => PG(p, "punting", "PUNT") >= 5 ? PG(p, "punting", "YDS") / PG(p, "punting", "PUNT") : null, f1, "min. 5 punts"],
-  ["Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")],
+  ["off", "Passing yards", p => PG(p, "passing", "YDS")], ["off", "Passing TDs", p => PG(p, "passing", "TD")], ["off", "Interceptions thrown", p => PG(p, "passing", "INT")],
+  ["off", "Passer rating", p => PG(p, "passing", "ATT") >= 20 ? passerRating(PG(p, "passing", "CMP"), PG(p, "passing", "ATT"), PG(p, "passing", "YDS"), PG(p, "passing", "TD"), PG(p, "passing", "INT")) : null, f1, "min. 20 attempts"],
+  ["off", "Rushing yards", p => PG(p, "rushing", "YDS")], ["off", "Rushing TDs", p => PG(p, "rushing", "TD")],
+  ["off", "Yards per carry", p => PG(p, "rushing", "CAR") >= 15 ? PG(p, "rushing", "YDS") / PG(p, "rushing", "CAR") : null, f1, "min. 15 carries"],
+  ["off", "Receptions", p => PG(p, "receiving", "REC")], ["off", "Receiving yards", p => PG(p, "receiving", "YDS")], ["off", "Receiving TDs", p => PG(p, "receiving", "TD")],
+  ["off", "Scrimmage yards", p => p.SCRIM], ["off", "Total touchdowns", p => p.TOTTD],
+  ["off", "Fumbles", p => PG(p, "rushing", "FUM")], ["off", "Fumbles lost", p => PG(p, "rushing", "FL")],
+  ["off", "Fantasy points (PPR)", p => p.FPTS, f1],
+  ["def", "Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST")], ["def", "Sacks", p => PG(p, "defense", "SCK")], ["def", "Tackles for loss", p => PG(p, "defense", "TFL")],
+  ["def", "Interceptions", p => PG(p, "defense", "INT")], ["def", "Passes defended", p => PG(p, "defense", "PD")],
+  ["def", "Forced fumbles", p => PG(p, "defense", "FF")], ["def", "Fumbles recovered", p => PG(p, "defense", "FR")], ["def", "Defensive touchdowns", p => PG(p, "defense", "DTD")],
+  ["st", "Field goals made", p => PG(p, "kicking", "FGM")], ["st", "Longest field goal", p => PG(p, "kicking", "LNG")], ["st", "Extra points made", p => PG(p, "kicking", "XPM")],
+  ["st", "Punting average", p => PG(p, "punting", "PUNT") >= 5 ? PG(p, "punting", "YDS") / PG(p, "punting", "PUNT") : null, f1, "min. 5 punts"], ["st", "Punts inside the 20", p => PG(p, "punting", "IN20")],
+  ["st", "Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")], ["st", "Return touchdowns", p => PG(p, "returns", "RTD")],
 ];
+// which side(s) a player's lines fall on, for the Players list filter
+const SIDE_GROUPS = { off: ["passing", "rushing", "receiving"], def: ["defense"], st: ["kicking", "punting", "returns"] };
+// (ESPN counts falling on your own fumble as a recovery, so a recovery alone doesn't make someone a defender)
+const onSide = (p, side) => side === "all" || SIDE_GROUPS[side].some(g => p.g[g] && Object.entries(p.g[g]).some(([k, v]) => num(v) && !(g === "defense" && k === "FR")));
+function sidePickHtml() { return '<div class="pick" style="margin-bottom:8px">' + [["all", "All"]].concat(SIDES).map(([v, l]) => '<button data-svside="' + v + '" class="' + (SV.side === v ? "on" : "") + '">' + l + "</button>").join("") + "</div>"; }
 function boardHtml(title, rows, fmt, note, n) {
   if (!rows.length) return "";
   const row = (r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.p.name) + '">' + esc(r.p.name) + '</button> <span class="sub">' + esc(r.sub || teamsLabel(r.p)) + '</span></span><span class="v">' + esc(fmt ? fmt(r.v) : r.v) + "</span></div>";
@@ -1933,16 +1944,23 @@ function renderStatsBody() {
   let h = "";
   if (SV.tab === "leaders") {
     h += '<div class="hint">' + plural(gs.length, "game") + (SV.season !== "all" ? " in " + esc(SV.season) : "") + " · tap a name for his page" + (appMode === "video" ? " · includes season lines you typed in" : "") + "</div>";
-    for (const [t, f, fmt, note] of BOARDS) {
-      const rows = ps.map(p => ({ p, v: f(p) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v);
-      h += boardHtml(t, rows, fmt, note);
+    h += sidePickHtml();
+    for (const [side, label] of SIDES) {
+      if (SV.side !== "all" && SV.side !== side) continue;
+      let part = "";
+      for (const [sd, t, f, fmt, note] of BOARDS) {
+        if (sd !== side) continue;
+        const rows = ps.map(p => ({ p, v: f(p) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v);
+        part += boardHtml(t, rows, fmt, note);
+      }
+      if (ps.length) h += '<h3 class="disp" style="margin:14px 0 6px;font-size:17px">' + label + "</h3>" + (part || '<div class="hint">No ' + label.replace(/^\S+\s/, "").toLowerCase() + " stats in these games yet.</div>");
     }
     if (!ps.length) h += '<div class="empty">No player stats in these games yet.</div>';
   } else if (SV.tab === "players") {
-    h += '<input id="svQ" placeholder="Find a player…" value="' + esc(SV.q) + '" style="margin-bottom:10px">';
+    h += sidePickHtml() + '<input id="svQ" placeholder="Find a player…" value="' + esc(SV.q) + '" style="margin-bottom:10px">';
     const q = canonName(SV.q);
-    const list = ps.filter(p => !q || p.key.includes(q) || canonName(teamsLabel(p)).includes(q)).sort((a, b) => b.G - a.G || a.name.localeCompare(b.name));
-    h += '<div class="lbtable">' + (list.slice(0, 200).map(p => '<div class="lbrow"><span class="nm"><button class="linkish" data-pp="' + esc(p.name) + '">' + esc(p.name) + '</button> <span class="sub">' + esc(teamsLabel(p)) + "</span><br><span class=\"sub\">" + esc(primaryLine(p)) + '</span></span><span class="v">' + p.G + ' <span class="sub">G</span></span></div>').join("") || '<div class="lbrow">Nobody matches.</div>') + "</div>";
+    const list = ps.filter(p => onSide(p, SV.side) && (!q || p.key.includes(q) || canonName(teamsLabel(p)).includes(q))).sort((a, b) => b.G - a.G || a.name.localeCompare(b.name));
+    h += '<div class="lbtable">' + (list.slice(0, 200).map(p => '<div class="lbrow"><span class="nm"><button class="linkish" data-pp="' + esc(p.name) + '">' + esc(p.name) + '</button> <span class="sub">' + esc(teamsLabel(p)) + "</span><br><span class=\"sub\">" + esc(primaryLine(p, SV.side)) + '</span></span><span class="v">' + p.G + ' <span class="sub">G</span></span></div>').join("") || '<div class="lbrow">Nobody matches.</div>') + "</div>";
     if (list.length > 200) h += '<div class="hint">Showing 200 of ' + list.length + " — search to narrow it down.</div>";
   } else if (SV.tab === "teams") {
     if (appMode === "video") {
@@ -1982,6 +2000,7 @@ $("view-stats").addEventListener("input", ev => {
 });
 $("view-stats").addEventListener("click", ev => {
   const b = ev.target.closest("button"); if (!b) return;
+  if (b.dataset.svside) { SV.side = b.dataset.svside; renderStatsBody(); return; }
   if (b.dataset.svt) { SV.tab = b.dataset.svt; document.querySelectorAll("#view-stats .tab").forEach(t => t.classList.toggle("active", t.dataset.svt === SV.tab)); renderStatsBody(); }
   else if (b.dataset.pp) openPlayerPage(b.dataset.pp);
   else if (b.dataset.tpg) openTeamPage(b.dataset.tpg);
