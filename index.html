@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -402,6 +402,18 @@ const LEVELS = {
   real: [{ v: "pro", label: "NFL / pro" }, { v: "college", label: "College" }, { v: "hs", label: "High school" }, { v: "other", label: "Other" }],
   video: [{ v: "pro", label: "Madden / pro" }, { v: "college", label: "College Football" }, { v: "other", label: "Other game" }],
 };
+// What kind of game: regular season (conference title games included), NFL playoffs, a bowl, or the College Football Playoff.
+const STAGES = [{ v: "reg", label: "Regular season" }, { v: "playoffs", label: "NFL playoffs" }, { v: "bowl", label: "Bowl game" }, { v: "cfp", label: "College Football Playoff" }];
+const stageOf = e => e.stage || "reg";
+const stageLabel = e => (STAGES.find(x => x.v === stageOf(e)) || STAGES[0]).label;
+// From ESPN: season type 3 is the postseason; its note names the bowl, or says "College Football Playoff".
+function espnStage(lg, seasonType, note) {
+  if (num(seasonType) !== 3) return "reg";
+  if (lg === "nfl") return /pro bowl/i.test(note || "") ? "reg" : "playoffs";
+  return /college football playoff|\bcfp\b/i.test(note || "") ? "cfp" : "bowl";
+}
+const espnNote = ev => { const c = ((ev || {}).competitions || [])[0] || {}; return ((c.notes || [])[0] || {}).headline || ""; };
+const espnSeasonType = ev => ev && ((ev.seasonType && ev.seasonType.type) || (ev.season && ev.season.type));
 function levelLabel(e) { const l = (LEVELS[modeOf(e)] || []).find(x => x.v === e.level); return l ? l.label : ""; }
 const VENUES = {
   real: [
@@ -1028,13 +1040,14 @@ function fillFilters() {
 }
 function gameMatches(e, q) {
   if (!q) return true;
-  const hay = [e.away, e.home, e.place, e.notes, e.season, levelLabel(e), venueDef(e).words, e.date, e.diff].concat((e.box || []).map(r => r.player)).join(" ").toLowerCase();
+  const hay = [e.away, e.home, e.place, e.notes, e.season, levelLabel(e), stageOf(e) !== "reg" ? stageLabel(e) + " " + (e.note || "") : "", venueDef(e).words, e.date, e.diff].concat((e.box || []).map(r => r.player)).join(" ").toLowerCase();
   return q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
 }
 function cardHtml(e) {
   const v = venueDef(e), w = winnerOf(e), ur = userResult(e);
   const meta = [fmtDate(e.date)];
   if (levelLabel(e)) meta.push(levelLabel(e));
+  if (stageOf(e) !== "reg") meta.push(e.note || stageLabel(e));
   if (v.meta) meta.push(v.meta);
   if (filled(e.place)) meta.push(e.place);
   if (modeOf(e) === "video" && filled(e.season)) meta.push(e.season);
@@ -1116,6 +1129,7 @@ function renderForm() {
   const vdef = venueDef(g);
   let h = '<div class="panel"><div class="panel-head"><b class="disp">' + (g._editing ? "Edit game" : "Log a game") + (vid ? " 🎮" : "") + '</b><button class="xbtn" data-fa="cancel" aria-label="Close">✕</button></div>';
   h += '<div class="grid2"><div><label>Date</label><input type="date" data-f="date" value="' + esc(g.date) + '"></div><div><label>Level</label><select data-f="level">' + LEVELS[modeOf(g)].map(l => opt(l.v, l.label, g.level)).join("") + "</select></div></div>";
+  h += '<label>Game</label><select data-f="stage">' + STAGES.map(st => opt(st.v, st.label, stageOf(g))).join("") + "</select>" + (g.note ? '<div class="hint" style="margin-top:4px">' + esc(g.note) + "</div>" : "");
   if (vid) h += '<div class="grid2"><div><label>Season / save</label><input data-f="season" list="seasonList" value="' + esc(g.season) + '" placeholder="Franchise Yr 2, Dynasty 2027…"></div><div><label>Difficulty</label><select data-f="diff">' + DIFFS.map(d => opt(d, d || "—", g.diff)).join("") + "</select></div></div>";
   h += '<div class="grid-teams"><div><label>Away team</label><input data-f="away" list="teamList" value="' + esc(g.away) + '" placeholder="Away"></div><div><label>Pts</label><input data-f="as" inputmode="numeric" value="' + esc(g.as) + '"' + (live ? " readonly" : "") + "></div>";
   h += '<div><label>Home team</label><input data-f="home" list="teamList" value="' + esc(g.home) + '" placeholder="Home"></div><div><label>Pts</label><input data-f="hs" inputmode="numeric" value="' + esc(g.hs) + '"' + (live ? " readonly" : "") + "></div></div>";
@@ -1153,7 +1167,7 @@ $("formArea").addEventListener("input", ev => {
   else if (t.dataset.line) { const arr = form.line[t.dataset.line]; while (arr.length <= +t.dataset.qi) arr.push(""); arr[+t.dataset.qi] = t.value; }
   saveDraft();
 });
-$("formArea").addEventListener("change", ev => { if (form && ev.target.dataset.f === "level") { form.level = ev.target.value; saveDraft(); } });
+$("formArea").addEventListener("change", ev => { if (form && (ev.target.dataset.f === "level" || ev.target.dataset.f === "stage")) { form[ev.target.dataset.f] = ev.target.value; saveDraft(); } });
 $("formArea").addEventListener("click", ev => {
   if (!form) return;
   const b = ev.target.closest("button"); if (!b) return;
@@ -1895,9 +1909,9 @@ function primaryLine(p, side) {
 }
 
 // ── Stats view ────────────────────────────────────────────────────────
-const SV = { tab: "leaders", side: "all", season: "all", level: "all", q: "", cmp: { a: { name: "", mode: "", season: "all" }, b: { name: "", mode: "", season: "all" } } };
+const SV = { tab: "leaders", side: "all", stage: "all", season: "all", level: "all", q: "", cmp: { a: { name: "", mode: "", season: "all" }, b: { name: "", mode: "", season: "all" } } };
 function seasonsIn(games) { return [...new Set(games.map(seasonOf).filter(Boolean))].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); }
-function statsGames() { return modeGames().filter(e => (SV.season === "all" || seasonOf(e) === SV.season) && (SV.level === "all" || e.level === SV.level)); }
+function statsGames() { return modeGames().filter(e => (SV.season === "all" || seasonOf(e) === SV.season) && (SV.level === "all" || e.level === SV.level) && (SV.stage === "all" || (SV.stage === "post" ? stageOf(e) !== "reg" : stageOf(e) === SV.stage))); }
 // Leader boards by side of the ball: [side, title, value(p), format, note]
 const SIDES = [["off", "🏈 Offense"], ["def", "🛡️ Defense"], ["st", "🦶 Special teams"]];
 const BOARDS = [
@@ -1933,7 +1947,7 @@ function renderStats() {
   if (!all.length) { el.innerHTML = '<div class="empty">Stats fill in as you log games with box scores or play-by-play.</div>'; return; }
   const seasons = seasonsIn(all);
   if (SV.season !== "all" && !seasons.includes(SV.season)) SV.season = "all";
-  let h = '<div class="controls"><select id="svSeason" class="inline">' + opt("all", "All seasons", SV.season) + seasons.map(s => opt(s, s, SV.season)).join("") + '</select><select id="svLevel" class="inline">' + opt("all", "All levels", SV.level) + LEVELS[appMode].map(l => opt(l.v, l.label, SV.level)).join("") + "</select></div>";
+  let h = '<div class="controls"><select id="svSeason" class="inline">' + opt("all", "All seasons", SV.season) + seasons.map(s => opt(s, s, SV.season)).join("") + '</select><select id="svLevel" class="inline">' + opt("all", "All levels", SV.level) + LEVELS[appMode].map(l => opt(l.v, l.label, SV.level)).join("") + '</select><select id="svStage" class="inline">' + opt("all", "All games", SV.stage) + STAGES.map(st => opt(st.v, st.v === "reg" ? "Regular season" : st.v === "playoffs" ? "NFL playoffs" : st.v === "bowl" ? "Bowl games" : "CFP", SV.stage)).join("") + opt("post", "All postseason", SV.stage) + "</select></div>";
   h += '<div class="tabs">' + [["leaders", "Leaders"], ["players", "Players"], ["teams", "Teams"], ["compare", "Compare"]].map(([v, l]) => '<button class="tab' + (SV.tab === v ? " active" : "") + '" data-svt="' + v + '">' + l + "</button>").join("") + "</div><div id=\"svBody\"></div>";
   el.innerHTML = h;
   renderStatsBody();
@@ -1992,6 +2006,7 @@ $("view-stats").addEventListener("change", ev => {
   const t = ev.target;
   if (t.id === "svSeason") { SV.season = t.value; renderStatsBody(); }
   else if (t.id === "svLevel") { SV.level = t.value; renderStatsBody(); }
+  else if (t.id === "svStage") { SV.stage = t.value; renderStatsBody(); }
   else if (t.dataset.cmps) { SV.cmp[t.dataset.cmps].season = t.value; renderStatsBody(); }
   else if (t.dataset.cmpn) { SV.cmp[t.dataset.cmpn].name = t.value; renderStatsBody(); }
 });
@@ -2383,7 +2398,7 @@ const ESPN_KEYS = {
 const ESPN_GROUP = { passing: "passing", rushing: "rushing", receiving: "receiving", defensive: "defense", interceptions: "defense", kickReturns: "returns", puntReturns: "returns", kicking: "kicking", punting: "punting" };
 const pair = v => { const m = String(v).match(/^(-?\d+(?:\.\d+)?)\s*[\/-]\s*(-?\d+(?:\.\d+)?)$/); return m ? [num(m[1]), num(m[2])] : [num(v), 0]; };
 function localDate(iso) { const d = new Date(iso); if (isNaN(d)) return today(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
-async function fetchEspnGame(lg, id) {
+async function fetchEspnGame(lg, id, ev) {
   const j = await espnJson(lg + "/summary?event=" + id);
   const comp = j.header.competitions[0];
   const C = {}; for (const c of comp.competitors) C[c.homeAway] = c;
@@ -2391,6 +2406,7 @@ async function fetchEspnGame(lg, id) {
   const g = blankGame();
   Object.assign(g, { mode: "real", level: lg === "nfl" ? "pro" : "college", date: localDate(comp.date), away: C.away.team.displayName, home: C.home.team.displayName, as: num(C.away.score), hs: num(C.home.score), src: "espn:" + id, venue: "tv", tdFix: 1 });
   g.abbr = { away: C.away.team.abbreviation || "", home: C.home.team.abbreviation || "" };
+  { const note = espnNote(ev), st = espnSeasonType(ev) || (j.header.season || {}).type; g.stage = espnStage(lg, st, note); if (g.stage !== "reg" && note) g.note = note; }
   g.line = { away: (C.away.linescores || []).map(x => num(x.displayValue ?? x.value)), home: (C.home.linescores || []).map(x => num(x.displayValue ?? x.value)) };
   while (g.line.away.length < 4) g.line.away.push(""); while (g.line.home.length < 4) g.line.home.push("");
   const gi = j.gameInfo || {};
@@ -2591,7 +2607,7 @@ function openEspnImport() {
         for (const e of todo) {
           if (!busy) break;
           msg = "Importing " + (done + bad.length + 1) + " of " + todo.length + "…"; keepScroll = true; draw();
-          try { const g = await fetchEspnGame(lg, e.id); g.venue = venue; saveImported(g); persist(); picked.delete(e.id); done++; }
+          try { const g = await fetchEspnGame(lg, e.id, e); g.venue = venue; saveImported(g); persist(); picked.delete(e.id); done++; }
           catch (err) { bad.push(e.shortName || e.name || e.id); }
         }
         const stopped = !busy; busy = false;
@@ -2603,7 +2619,7 @@ function openEspnImport() {
       if (b.dataset.eid) {
         if (entries.some(x => x.src === "espn:" + b.dataset.eid) && !confirm("You already logged this game. Import it again as a second copy?")) return;
         b.disabled = true; b.firstChild.textContent = "Importing…";
-        try { const g = await fetchEspnGame(lg, b.dataset.eid); closeOverlay(); form = g; form._editing = false; renderForm(); saveDraft(); $("formArea").scrollIntoView({ behavior: "smooth" }); toast("Imported — pick how you watched it, then save."); }
+        try { const g = await fetchEspnGame(lg, b.dataset.eid, (list || []).find(x => x.id === b.dataset.eid)); closeOverlay(); form = g; form._editing = false; renderForm(); saveDraft(); $("formArea").scrollIntoView({ behavior: "smooth" }); toast("Imported — pick how you watched it, then save."); }
         catch (e) { msg = "That game didn't import (" + (e.message || "error") + "). Try another, or log it by hand."; draw(); }
       }
     };
@@ -2832,8 +2848,36 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
   const d = lsGet("draft", null);
   if (d && d.id) { form = d; renderForm(); $("draftNote").classList.remove("hidden"); }
   renderList(); renderBackupStatus();
-  fixImportedTDs();
+  fixImportedTDs().then(fixImportedStages);
 })();
+
+// v10: games imported before game types existed: look each up once on that day's ESPN scoreboard (which names the
+// bowl or playoff round). Regular-season dates are skipped without asking ESPN. Offline: tries again next open.
+async function fixImportedStages() {
+  const todo = entries.filter(e => /^espn:/.test(e.src || "") && !e.stage);
+  if (!todo.length) return;
+  const boards = {}, shift = (d, n) => { const x = new Date(d + "T12:00:00"); x.setDate(x.getDate() + n); return localDate(x.toISOString()); };
+  let moved = 0;
+  for (const e of todo) {
+    const lg = e.level === "college" ? "college-football" : "nfl", id = e.src.slice(5);
+    const m = num((e.date || "").slice(5, 7));
+    if (m >= 3 && m <= 11 || (lg === "nfl" && m === 12)) { e.stage = "reg"; continue; }   // no postseason games then
+    let ev = null;
+    try {
+      for (const d of [e.date, shift(e.date, 1), shift(e.date, -1)]) {
+        const k = lg + d;
+        if (!boards[k]) boards[k] = (await espnJson(lg + "/scoreboard?dates=" + d.replace(/-/g, "") + (lg === "nfl" ? "" : "&groups=80&limit=300"))).events || [];
+        ev = boards[k].find(x => x.id === id); if (ev) break;
+      }
+      // not on the scoreboard: the game's own summary still knows whether it was the postseason (just not which bowl)
+      if (!ev) { const j = await espnJson(lg + "/summary?event=" + id); e.stage = espnStage(lg, (j.header.season || {}).type, ""); if (e.stage !== "reg") moved++; continue; }
+    } catch (err) { continue; }
+    e.stage = espnStage(lg, espnSeasonType(ev), espnNote(ev));
+    if (e.stage !== "reg") { if (espnNote(ev)) e.note = espnNote(ev); moved++; }
+  }
+  persist();
+  if (moved) { renderList(); if (!$("view-stats").classList.contains("hidden")) renderStats(); toast(plural(moved, "imported game") + " marked as playoff or bowl games."); }
+}
 
 // v9: games imported from ESPN before v9 counted a pick-six twice and could fold return TDs into defensive TDs.
 // Once, quietly, re-read just the defensive TDs of those games from ESPN (needs a connection; tries again next open if offline).
