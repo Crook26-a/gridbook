@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v6";
+const APP_VERSION = "v7";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -1875,6 +1875,18 @@ function aggregatePlayers(games, opts) {
     return derive(p);
   });
 }
+// The team(s) a player was seen with in these games: the latest first, then the others ("Chiefs / Chargers").
+function teamsLabel(p) {
+  const ts = Object.keys(p.teams || {}).filter(Boolean);
+  if (p.team && ts.includes(p.team)) return [p.team].concat(ts.filter(t => t !== p.team)).join(" / ");
+  return ts.join(" / ") || p.team || "";
+}
+// A player's team in one game, by name (from the box score row, or the play-by-play's side).
+function teamInGame(e, name) {
+  const k = canonName(name); if (!e || !k) return "";
+  const r = (e.box || []).find(x => canonName(x.player) === k);
+  return r ? sideName(e, r.team) : "";
+}
 function primaryLine(p) {
   const order = [["passing", "ATT"], ["rushing", "CAR"], ["receiving", "REC"], ["defense", "TKL"], ["kicking", "FGA"], ["punting", "PUNT"], ["returns", "KR"]];
   let best = null, bv = 0;
@@ -1900,7 +1912,7 @@ const BOARDS = [
 ];
 function boardHtml(title, rows, fmt, note, n) {
   if (!rows.length) return "";
-  const row = (r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.p.name) + '">' + esc(r.p.name) + '</button> <span class="sub">' + esc(r.sub || r.p.team || "") + '</span></span><span class="v">' + esc(fmt ? fmt(r.v) : r.v) + "</span></div>";
+  const row = (r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.p.name) + '">' + esc(r.p.name) + '</button> <span class="sub">' + esc(r.sub || teamsLabel(r.p)) + '</span></span><span class="v">' + esc(fmt ? fmt(r.v) : r.v) + "</span></div>";
   let h = '<div class="lbtable"><div class="lbhead"><span>' + esc(title) + "</span>" + (note ? '<span class="sub" style="font-weight:400">' + esc(note) + "</span>" : "") + "</div>" + rows.slice(0, n || 5).map(row).join("");
   if (rows.length > (n || 5)) h += '<details><summary class="lbrow" style="cursor:pointer;color:var(--red);font-size:12px;list-style:none">Show top ' + Math.min(15, rows.length) + "</summary>" + rows.slice(n || 5, 15).map((r, i) => row(r, i + (n || 5))).join("") + "</details>";
   return h + "</div>";
@@ -1929,8 +1941,8 @@ function renderStatsBody() {
   } else if (SV.tab === "players") {
     h += '<input id="svQ" placeholder="Find a player…" value="' + esc(SV.q) + '" style="margin-bottom:10px">';
     const q = canonName(SV.q);
-    const list = ps.filter(p => !q || p.key.includes(q) || canonName(p.team).includes(q)).sort((a, b) => b.G - a.G || a.name.localeCompare(b.name));
-    h += '<div class="lbtable">' + (list.slice(0, 200).map(p => '<div class="lbrow"><span class="nm"><button class="linkish" data-pp="' + esc(p.name) + '">' + esc(p.name) + '</button> <span class="sub">' + esc(p.team) + "</span><br><span class=\"sub\">" + esc(primaryLine(p)) + '</span></span><span class="v">' + p.G + ' <span class="sub">G</span></span></div>').join("") || '<div class="lbrow">Nobody matches.</div>') + "</div>";
+    const list = ps.filter(p => !q || p.key.includes(q) || canonName(teamsLabel(p)).includes(q)).sort((a, b) => b.G - a.G || a.name.localeCompare(b.name));
+    h += '<div class="lbtable">' + (list.slice(0, 200).map(p => '<div class="lbrow"><span class="nm"><button class="linkish" data-pp="' + esc(p.name) + '">' + esc(p.name) + '</button> <span class="sub">' + esc(teamsLabel(p)) + "</span><br><span class=\"sub\">" + esc(primaryLine(p)) + '</span></span><span class="v">' + p.G + ' <span class="sub">G</span></span></div>').join("") || '<div class="lbrow">Nobody matches.</div>') + "</div>";
     if (list.length > 200) h += '<div class="hint">Showing 200 of ' + list.length + " — search to narrow it down.</div>";
   } else if (SV.tab === "teams") {
     if (appMode === "video") {
@@ -2005,7 +2017,7 @@ function compareHtml() {
     ["Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST"), 1], ["Sacks", p => PG(p, "defense", "SCK"), 1], ["Interceptions", p => PG(p, "defense", "INT"), 1],
     ["FG made", p => PG(p, "kicking", "FGM"), 1],
   ];
-  const lbl = (s, P) => esc(P.name) + "<br><span style=\"font-weight:400\">" + (c[s].mode === "video" ? "🎮 " : "🏈 ") + esc(c[s].season === "all" ? "career" : c[s].season) + "</span>";
+  const lbl = (s, P) => esc(P.name) + (teamsLabel(P) ? '<br><span style="font-weight:400">' + esc(teamsLabel(P)) + "</span>" : "") + "<br><span style=\"font-weight:400\">" + (c[s].mode === "video" ? "🎮 " : "🏈 ") + esc(c[s].season === "all" ? "career" : c[s].season) + "</span>";
   h += '<div class="boxwrap" style="margin-top:12px"><table class="cmptbl"><tr><th></th><th>' + lbl("a", A) + "</th><th>" + lbl("b", B) + "</th></tr>";
   for (const [l, f, dir, fmt] of rows) {
     const a = f(A), b = f(B);
@@ -2127,7 +2139,7 @@ function recGameBests(gs) {
   for (const e of gs) for (const p of gamePlayerLines(e)) all.push({ e, p });
   let h = '<div class="hint">Single-game highs from every game you logged. Tap a name for his page, the date to jump to the game.</div>';
   for (const [t, f, fmt] of defs) {
-    const list = all.map(({ e, p }) => ({ name: p.name, v: f(p), gid: e.id, sub: fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v);
+    const list = all.map(({ e, p }) => ({ name: p.name, v: f(p), gid: e.id, sub: teamAbbr(e, p.side) + " · " + fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v);
     h += perfBoard(t, list, fmt);
   }
   return h;
@@ -2140,7 +2152,7 @@ function recSeasonBests(gs) {
   const defs = [["Passing yards", p => PG(p, "passing", "YDS")], ["Passing TDs", p => PG(p, "passing", "TD")], ["Rushing yards", p => PG(p, "rushing", "YDS")], ["Receiving yards", p => PG(p, "receiving", "YDS")], ["Receptions", p => PG(p, "receiving", "REC")], ["Scrimmage yards", p => p.SCRIM], ["Total touchdowns", p => p.TOTTD], ["Sacks", p => PG(p, "defense", "SCK")], ["Interceptions", p => PG(p, "defense", "INT")], ["Games seen", p => p.G]];
   let h = '<div class="hint">Best single seasons, counting only the games you logged' + (appMode === "video" ? " plus season lines you typed in" : "") + ".</div>";
   for (const [t, f] of defs) {
-    const list = all.map(({ s, p }) => ({ name: p.name, v: f(p), sub: s + " · " + p.G + " G" })).filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 5);
+    const list = all.map(({ s, p }) => ({ name: p.name, v: f(p), sub: (teamsLabel(p) ? teamsLabel(p) + " · " : "") + s + " · " + p.G + " G" })).filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 5);
     if (list.length) h += '<div class="lbtable"><div class="lbhead">' + t + "</div>" + list.map((r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.name) + '">' + esc(r.name) + '</button> <span class="sub">' + esc(r.sub) + '</span></span><span class="v">' + r.v + "</span></div>").join("") + "</div>";
   }
   return h;
@@ -2205,17 +2217,18 @@ function autoFirsts(gs) {
   const tests = [["first TD you saw", p => p.TOTTD > 0], ["first 100-yard rushing game", p => PG(p, "rushing", "YDS") >= 100], ["first 100-yard receiving game", p => PG(p, "receiving", "YDS") >= 100], ["first 300-yard passing game", p => PG(p, "passing", "YDS") >= 300], ["first TD pass you saw", p => PG(p, "passing", "TD") > 0], ["first sack you saw", p => PG(p, "defense", "SCK") > 0], ["first interception you saw", p => PG(p, "defense", "INT") > 0], ["first field goal you saw", p => PG(p, "kicking", "FGM") > 0]];
   for (const e of chronGames(gs)) for (const p of gamePlayerLines(e)) {
     const s = seen[p.key] = seen[p.key] || {};
-    if (!s.game) { s.game = 1; out.push({ name: p.name, label: "first game you saw him", e }); }
-    for (const [lbl, f] of tests) if (!s[lbl] && f(p)) { s[lbl] = 1; out.push({ name: p.name, label: lbl, e }); }
+    const team = sideName(e, p.side);
+    if (!s.game) { s.game = 1; out.push({ name: p.name, team, label: "first game you saw him", e }); }
+    for (const [lbl, f] of tests) if (!s[lbl] && f(p)) { s[lbl] = 1; out.push({ name: p.name, team, label: lbl, e }); }
   }
   return out;
 }
 function recFirsts(gs) {
   let h = '<input id="fq" placeholder="Find a player…" style="margin-bottom:10px">';
   const cf = aux.firsts.filter(f => f.mode === appMode).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  h += '<div class="lbtable"><div class="lbhead">🎉 Career firsts you witnessed</div>' + (cf.map(f => '<div class="lbrow" data-fname="' + esc(canonName(f.player)) + '"><span class="nm" style="white-space:normal"><button class="linkish" data-pp="' + esc(f.player) + '">' + esc(f.player || "—") + "</button> — " + esc(f.label) + '<br><button class="linkish sub" data-goto="' + f.gameId + '">' + esc(fmtDate(f.date, true)) + '</button></span><button class="delrow" data-fdel="' + f.id + '" aria-label="Remove">✕</button></div>').join("") || '<div class="lbrow sub">While scoring live, open “Review, career first” on a play to mark someone\'s first career TD, first start, and so on.</div>') + "</div>";
+  h += '<div class="lbtable"><div class="lbhead">🎉 Career firsts you witnessed</div>' + (cf.map(f => '<div class="lbrow" data-fname="' + esc(canonName(f.player)) + '"><span class="nm" style="white-space:normal"><button class="linkish" data-pp="' + esc(f.player) + '">' + esc(f.player || "—") + "</button>" + ((t => t ? ' <span class="sub">' + esc(t) + "</span>" : "")(teamInGame(entries.find(x => x.id === f.gameId), f.player))) + " — " + esc(f.label) + '<br><button class="linkish sub" data-goto="' + f.gameId + '">' + esc(fmtDate(f.date, true)) + '</button></span><button class="delrow" data-fdel="' + f.id + '" aria-label="Remove">✕</button></div>').join("") || '<div class="lbrow sub">While scoring live, open “Review, career first” on a play to mark someone\'s first career TD, first start, and so on.</div>') + "</div>";
   const af = autoFirsts(gs).filter(x => x.label !== "first game you saw him").reverse();
-  h += '<div class="lbtable"><div class="lbhead">Firsts in front of you <span class="sub" style="font-weight:400">' + af.length + "</span></div>" + af.slice(0, 300).map(x => '<div class="lbrow" data-fname="' + esc(canonName(x.name)) + '"><span class="nm" style="white-space:normal"><button class="linkish" data-pp="' + esc(x.name) + '">' + esc(x.name) + "</button> — " + esc(x.label) + '</span><button class="linkish sub" data-goto="' + x.e.id + '">' + esc(fmtDate(x.e.date, true)) + "</button></div>").join("") + "</div>";
+  h += '<div class="lbtable"><div class="lbhead">Firsts in front of you <span class="sub" style="font-weight:400">' + af.length + "</span></div>" + af.slice(0, 300).map(x => '<div class="lbrow" data-fname="' + esc(canonName(x.name)) + '"><span class="nm" style="white-space:normal"><button class="linkish" data-pp="' + esc(x.name) + '">' + esc(x.name) + "</button>" + (x.team ? ' <span class="sub">' + esc(x.team) + "</span>" : "") + " — " + esc(x.label) + '</span><button class="linkish sub" data-goto="' + x.e.id + '">' + esc(fmtDate(x.e.date, true)) + "</button></div>").join("") + "</div>";
   return h;
 }
 function recProspects(gs) {
@@ -2244,7 +2257,7 @@ function recTrophies(gs) {
     if (filled(e.place) && (e.venue === "in-person" || appMode === "video")) places.add(canonName(e.place));
     for (const p of gamePlayerLines(e)) {
       players.add(p.key); yds += p.SCRIM;
-      const r = { player: p.name, date: d };
+      const r = { player: p.name, team: teamAbbr(e, p.side), date: d };
       if (PG(p, "passing", "YDS") >= 400) ev.p400.push(r);
       if (PG(p, "rushing", "YDS") >= 200) ev.r200.push(r);
       if (PG(p, "receiving", "YDS") >= 200) ev.c200.push(r);
@@ -2267,7 +2280,7 @@ function recTrophies(gs) {
     return '<details class="badge' + (done ? " earned" : " locked") + '"><summary><div class="bico">' + icon + '</div><div class="bname">' + name + (done ? " " + "★".repeat(done) : "") + '</div><div class="bval">' + Math.floor(v).toLocaleString() + " " + (Math.floor(v) === 1 ? unit.replace(/s$/, "") : unit) + (next ? " · next " + next.toLocaleString() : " · maxed") + '</div><div class="bbar"><div class="bfill" style="width:' + Math.round(clamp(pctv, 0, 1) * 100) + '%"></div></div></summary>' + (body || "") + "</details>";
   };
   const once = (icon, name, arr, blurb) => {
-    const ppl = {}; for (const x of arr) { ppl[x.player] = ppl[x.player] || { n: 0, d: x.date }; ppl[x.player].n++; }
+    const ppl = {}; for (const x of arr) { const k = x.player + (x.team ? " (" + x.team + ")" : ""); ppl[k] = ppl[k] || { n: 0, d: x.date }; ppl[k].n++; }
     const body = Object.keys(ppl).length ? '<div class="bmembers">' + Object.entries(ppl).map(([p, o]) => '<span class="bchip">' + esc(p) + (o.n > 1 ? " ×" + o.n : "") + "</span>").join("") + "</div>" : '<div class="bval" style="margin-top:6px">' + esc(blurb) + "</div>";
     return '<details class="badge' + (arr.length ? " earned" : " locked") + '"><summary><div class="bico">' + icon + '</div><div class="bname">' + name + '</div><div class="bval">' + (arr.length ? "seen " + plural(arr.length, "time") : "not yet") + "</div></summary>" + body + "</details>";
   };
