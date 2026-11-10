@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v5";
+const APP_VERSION = "v6";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -2450,18 +2450,25 @@ function openEspnImport() {
   if (appMode !== "real") { toast("Imports are for real games — switch to Real games."); return; }
   let by = lsGet("importBy", "date"), lg = "nfl", date = today(), list = null, msg = "";
   let tid = "", year = footballSeason(), teams = null, venue = "tv", busy = false;
+  let picked = new Set(), keepScroll = false;     // games ticked to import together (ids), cleared whenever the list changes
+  const logged = id => entries.some(x => x.src === "espn:" + id);
+  const isDone = ev => { const c = ev.competitions[0]; return !!((c.status || ev.status || {}).type || {}).completed; };
   const gameRow = (ev, withDate) => {
     const c = ev.competitions[0], A = c.competitors.find(x => x.homeAway === "away"), H = c.competitors.find(x => x.homeAway === "home");
     const done = c.status ? c.status.type && c.status.type.completed : ev.status && ev.status.type && ev.status.type.completed;
     const st = (c.status || ev.status || {}).type || {};
     const have = entries.some(x => x.src === "espn:" + ev.id);
     const when = withDate ? '<span class="hint" style="display:block;margin:0;font-size:11.5px">' + esc(((ev.week && ev.week.text) ? ev.week.text + " · " : "") + fmtDate(localDate(ev.date), true)) + (have ? " · ✓ logged" : "") + "</span>" : (have ? '<span class="hint" style="display:block;margin:0;font-size:11.5px">✓ logged</span>' : "");
-    return '<button class="vbtn" style="justify-content:space-between;text-align:left" data-eid="' + esc(ev.id) + '"><span>' + esc(A.team.displayName) + " @ " + esc(H.team.displayName) + when + '</span><span class="num">' + (done ? esc(espnScore(A.score) + "–" + espnScore(H.score)) : esc(st.shortDetail || "")) + "</span></button>";
+    const main = '<button class="vbtn" style="flex:1;justify-content:space-between;text-align:left" data-eid="' + esc(ev.id) + '"><span>' + esc(A.team.displayName) + " @ " + esc(H.team.displayName) + when + '</span><span class="num">' + (done ? esc(espnScore(A.score) + "–" + espnScore(H.score)) : esc(st.shortDetail || "")) + "</span></button>";
+    const tick = done && !have ? '<button class="vbtn" style="flex:none;width:46px;justify-content:center;font-size:20px;padding:4px" data-gpick="' + esc(ev.id) + '" aria-pressed="' + picked.has(ev.id) + '" aria-label="Pick this game">' + (picked.has(ev.id) ? "☑" : "☐") + "</button>" : '<span style="flex:none;width:46px"></span>';
+    return '<div style="display:flex;gap:6px;align-items:stretch">' + tick + main + "</div>";
   };
-  const finished = () => (list || []).filter(ev => { const c = ev.competitions[0]; return ((c.status || ev.status || {}).type || {}).completed; });
+  const finished = () => (list || []).filter(isDone);
+  const pickable = () => finished().filter(ev => !logged(ev.id));
+  const pickLabel = () => "📥 Import " + (picked.size ? plural(picked.size, "picked game") : "picked games");
   const draw = () => {
     let h = '<div class="sheet"><div class="sheet-head"><h2 class="disp">Import ' + (by === "team" ? "a team's season" : "a game") + '</h2><button class="xbtn" data-ei="close" aria-label="Close">✕</button></div>';
-    h += '<div class="hint">Pulls the final score, quarters, box score, team stats, scoring plays and drives from ESPN. ' + (by === "team" ? "Tap a game to look it over before saving, or bring in the whole season at once." : "You pick how you watched it, then save.") + "</div>";
+    h += '<div class="hint">Pulls the final score, quarters, box score, team stats, scoring plays and drives from ESPN. ' + "Tap a game to look it over before saving, or tick ☐ several and bring them in together" + (by === "team" ? ", or the whole season at once." : ".") + "</div>";
     h += '<div class="pick"><button data-by="date" class="' + (by === "date" ? "on" : "") + '">📅 By date</button><button data-by="team" class="' + (by === "team" ? "on" : "") + '">👥 By team\'s season</button></div>';
     h += '<div class="pick"><button data-lg="nfl" class="' + (lg === "nfl" ? "on" : "") + '">NFL</button><button data-lg="college-football" class="' + (lg !== "nfl" ? "on" : "") + '">College (FBS)</button></div>';
     if (by === "date") h += '<div style="display:flex;gap:8px;margin-bottom:10px"><input type="date" id="eiDate" value="' + date + '"><button class="savebtn disp" style="flex:none;padding:10px 16px" data-ei="find">Find games</button></div>';
@@ -2474,17 +2481,23 @@ function openEspnImport() {
       h += '<button class="savebtn disp" style="flex:none;padding:10px 16px" data-ei="season">Show season</button></div>';
     }
     if (msg) h += '<div class="hint" style="font-style:normal">' + esc(msg) + "</div>";
-    if (list && by === "team") {
-      const fin = finished(), fresh = fin.filter(ev => !entries.some(x => x.src === "espn:" + ev.id));
+    if (list) {
+      const fin = finished(), fresh = pickable(), gone = fin.length - fresh.length;
       if (fin.length) {
-        h += '<div class="card" style="margin-bottom:10px"><label style="margin-top:0">Bring in the whole season</label><div class="hint" style="margin:4px 0 8px">' + (fresh.length ? "Saves " + plural(fresh.length, "finished game") + " straight to your book" + (fin.length > fresh.length ? " (skipping " + (fin.length - fresh.length) + " you've already logged)" : "") + ", all marked as followed:" : "You've logged every finished game this season.") + "</div>";
-        if (fresh.length) h += '<div class="venue-btns">' + VENUES.real.map(v => '<button class="vbtn' + (venue === v.v ? " active" : "") + '" data-ivenue="' + v.v + '">' + v.label + "</button>").join("") + '</div><button class="savebtn disp" style="width:100%;margin-top:8px" data-ei="all"' + (busy ? " disabled" : "") + ">📥 Import all " + fresh.length + "</button>";
+        h += '<div class="card" style="margin-bottom:10px"><label style="margin-top:0">Bring in several at once</label><div class="hint" style="margin:4px 0 8px">' + (fresh.length ? "Tick ☐ the games you want below" + (by === "team" ? ", or take the whole season" : "") + ". They save straight to your book" + (gone ? " (" + plural(gone, "game") + " you've already logged " + (gone === 1 ? "is" : "are") + " left out)" : "") + ", all marked as followed:" : "You've logged every finished game " + (by === "team" ? "this season." : "that day.")) + "</div>";
+        if (fresh.length) {
+          h += '<div class="venue-btns">' + VENUES.real.map(v => '<button class="vbtn' + (venue === v.v ? " active" : "") + '" data-ivenue="' + v.v + '">' + v.label + "</button>").join("") + "</div>";
+          h += '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="savebtn disp" style="flex:1 1 160px" data-ei="picked"' + (busy || !picked.size ? " disabled" : "") + ">" + pickLabel() + "</button>";
+          if (by === "team") h += '<button class="savebtn disp" style="flex:1 1 120px" data-ei="all"' + (busy ? " disabled" : "") + ">📥 Import all " + fresh.length + "</button>";
+          h += '</div><div style="margin-top:8px;font-size:13px"><button class="linkish" data-ei="tickall">Tick all ' + fresh.length + '</button> · <button class="linkish" data-ei="tickclear">Clear ticks</button></div>';
+        }
         h += "</div>";
       }
     }
     if (list) h += '<div style="display:flex;flex-direction:column;gap:6px">' + (list.map(ev => gameRow(ev, by === "team")).join("") || '<div class="hint">' + (by === "team" ? "No games found for that season." : "No games that day.") + "</div>") + "</div>";
     h += "</div>";
-    const o = openOverlay(h);
+    const top = $("overlay").classList.contains("hidden") ? 0 : $("overlay").scrollTop;
+    const o = openOverlay(h); if (keepScroll) o.scrollTop = top; keepScroll = false;
     o.onchange = ev => { if (ev.target.id === "eiYear") { year = num(ev.target.value) || year; list = null; msg = ""; } };
     // the team box: tap it for the whole list, type to narrow it down, tap a team to pick it
     const showTeams = q => {
@@ -2500,15 +2513,23 @@ function openEspnImport() {
       if ($("eiTeamList") && !ev.target.closest("#eiTeamList")) $("eiTeamList").hidden = true;
       const b = ev.target.closest("button"); if (!b) return;
       if (b.dataset.tpick) { tid = b.dataset.tpick; $("eiTeamQ").value = b.textContent; $("eiTeamList").hidden = true; list = null; msg = ""; return; }
-      if (b.dataset.ei === "close") { if (busy && !confirm("Stop the season import? Games already brought in stay saved.")) return; busy = false; closeOverlay(); return; }
+      if (b.dataset.ei === "close") { if (busy && !confirm("Stop importing? Games already brought in stay saved.")) return; busy = false; closeOverlay(); return; }
       if (busy) return;
       const keep = () => { if ($("eiDate")) date = $("eiDate").value || date; if ($("eiYear")) year = num($("eiYear").value) || year; };
       if (b.dataset.by) { keep(); by = b.dataset.by; lsSet("importBy", by); list = null; msg = ""; draw(); if (by === "team" && !teams) loadTeams(); return; }
       if (b.dataset.lg) { keep(); if (lg !== b.dataset.lg) { tid = ""; teams = null; } lg = b.dataset.lg; list = null; msg = ""; draw(); if (by === "team" && !teams) loadTeams(); return; }
       if (b.dataset.ei === "retry") { msg = ""; draw(); loadTeams(); return; }
-      if (b.dataset.ivenue) { venue = b.dataset.ivenue; draw(); return; }
+      if (b.dataset.ivenue) { venue = b.dataset.ivenue; keepScroll = true; draw(); return; }
+      // ticking games changes the box and the button in place, so the list doesn't jump back to the top
+      const syncPicked = () => {
+        o.querySelectorAll("[data-gpick]").forEach(x => { const on = picked.has(x.dataset.gpick); x.textContent = on ? "☑" : "☐"; x.setAttribute("aria-pressed", on); });
+        const pb = o.querySelector('[data-ei="picked"]'); if (pb) { pb.textContent = pickLabel(); pb.disabled = !picked.size; }
+      };
+      if (b.dataset.gpick) { const id = b.dataset.gpick; if (picked.has(id)) picked.delete(id); else picked.add(id); syncPicked(); return; }
+      if (b.dataset.ei === "tickall") { pickable().forEach(ev => picked.add(ev.id)); syncPicked(); return; }
+      if (b.dataset.ei === "tickclear") { picked.clear(); syncPicked(); return; }
       if (b.dataset.ei === "find") {
-        date = $("eiDate").value || today(); msg = "Looking…"; list = null; draw();
+        date = $("eiDate").value || today(); msg = "Looking…"; list = null; picked.clear(); draw();
         try { const j = await espnJson(lg + "/scoreboard?dates=" + date.replace(/-/g, "") + (lg === "nfl" ? "" : "&groups=80&limit=300")); list = j.events || []; msg = ""; }
         catch (e) { msg = "Couldn't reach ESPN — check your connection and try again."; }
         draw(); return;
@@ -2518,18 +2539,19 @@ function openEspnImport() {
         if (!tid && $("eiTeamQ")) { const q = canonName($("eiTeamQ").value), m = q ? teams.filter(t => canonName(t.displayName).includes(q)) : []; if (m.length === 1) tid = m[0].id; }   // typed enough to mean one team
         if (!tid) { msg = "Pick a team first: tap the team box and choose one."; draw(); return; }
         const name = (teams.find(t => t.id === tid) || {}).displayName || "That team";
-        msg = "Looking up " + name + "'s " + year + " season…"; list = null; draw();
+        msg = "Looking up " + name + "'s " + year + " season…"; list = null; picked.clear(); draw();
         try { list = await espnTeamSeason(lg, tid, year); msg = list.length ? name + ", " + year + ": " + plural(list.length, "game") + "." : ""; }
         catch (e) { msg = "Couldn't reach ESPN — check your connection and try again."; }
         draw(); return;
       }
-      if (b.dataset.ei === "all") {
-        const todo = finished().filter(ev => !entries.some(x => x.src === "espn:" + ev.id));
+      if (b.dataset.ei === "all" || b.dataset.ei === "picked") {
+        const todo = b.dataset.ei === "all" ? pickable() : pickable().filter(ev => picked.has(ev.id));
+        if (!todo.length) return;
         busy = true; let done = 0; const bad = [];
         for (const e of todo) {
           if (!busy) break;
-          msg = "Importing " + (done + bad.length + 1) + " of " + todo.length + "…"; draw();
-          try { const g = await fetchEspnGame(lg, e.id); g.venue = venue; saveImported(g); persist(); done++; }
+          msg = "Importing " + (done + bad.length + 1) + " of " + todo.length + "…"; keepScroll = true; draw();
+          try { const g = await fetchEspnGame(lg, e.id); g.venue = venue; saveImported(g); persist(); picked.delete(e.id); done++; }
           catch (err) { bad.push(e.shortName || e.name || e.id); }
         }
         const stopped = !busy; busy = false;
