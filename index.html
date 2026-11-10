@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -2184,6 +2184,17 @@ function recBySide(defs, boardFor) {
   }
   return h;
 }
+// The n highest positive values of f over items, as [{x, v}], without sorting the whole list.
+function topN(items, f, n) {
+  const best = [];
+  for (const x of items) {
+    const v = f(x); if (v == null || !(v > 0)) continue;
+    if (best.length === n && v <= best[n - 1].v) continue;
+    let i = best.length; while (i > 0 && best[i - 1].v < v) i--;
+    best.splice(i, 0, { x, v }); if (best.length > n) best.pop();
+  }
+  return best;
+}
 const LNG = (g, c) => p => (p.g[g] && p.g[g][c] != null) ? PG(p, g, c) : null;
 function recGameBests(gs) {
   const defs = [
@@ -2200,7 +2211,8 @@ function recGameBests(gs) {
   const all = [];
   for (const e of gs) for (const p of gamePlayerLines(e)) all.push({ e, p });
   const h = '<div class="hint">Single-game highs from every game you logged. Tap a name for his page, the date to jump to the game.</div>';
-  return h + recBySide(defs, ([, t, f, fmt]) => perfBoard(t, all.map(({ e, p }) => ({ name: p.name, v: f(p), gid: e.id, sub: teamAbbr(e, p.side) + " · " + fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v), fmt));
+  // rank on the raw value first; dates and team labels are built only for the five rows shown (formatting every line was seconds of work)
+  return h + recBySide(defs, ([, t, f, fmt]) => perfBoard(t, topN(all, x => f(x.p), 5).map(({ x: { e, p }, v }) => ({ name: p.name, v, gid: e.id, sub: teamAbbr(e, p.side) + " · " + fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })), fmt));
 }
 function recSeasonBests(gs) {
   const by = {};
@@ -2218,7 +2230,7 @@ function recSeasonBests(gs) {
     ["st", "Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")], ["st", "Return touchdowns", p => PG(p, "returns", "RTD")],
   ];
   const board = (t, f) => {
-    const list = all.map(({ s, p }) => ({ name: p.name, v: f(p), sub: (teamsLabel(p) ? teamsLabel(p) + " · " : "") + s + " · " + p.G + " G" })).filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 5);
+    const list = topN(all, x => f(x.p), 5).map(({ x: { s, p }, v }) => ({ name: p.name, v, sub: (teamsLabel(p) ? teamsLabel(p) + " · " : "") + s + " · " + p.G + " G" }));
     return list.length ? '<div class="lbtable"><div class="lbhead">' + t + "</div>" + list.map((r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.name) + '">' + esc(r.name) + '</button> <span class="sub">' + esc(r.sub) + '</span></span><span class="v">' + r.v + "</span></div>").join("") + "</div>" : "";
   };
   let h = '<div class="hint">Best single seasons, counting only the games you logged' + (appMode === "video" ? " plus season lines you typed in" : "") + ".</div>";
