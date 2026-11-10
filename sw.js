@@ -1,5 +1,5 @@
 // Service worker: caches the whole app so it opens instantly, even offline.
-const CACHE = "gridbook-v11";
+const CACHE = "gridbook-v12";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-512-maskable.png"];
 
 self.addEventListener("install", e => {

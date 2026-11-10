@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v11";
+const APP_VERSION = "v12";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -412,6 +412,9 @@ function espnStage(lg, seasonType, note) {
   if (lg === "nfl") return /pro bowl/i.test(note || "") ? "reg" : "playoffs";
   return /college football playoff|\bcfp\b/i.test(note || "") ? "cfp" : "bowl";
 }
+// the game-type filter used by Stats and Records: all, one type, or every postseason game
+const stageMatch = (e, v) => v === "all" || (v === "post" ? stageOf(e) !== "reg" : stageOf(e) === v);
+const stageOpts = v => [["all", "All games"], ["reg", "Regular season"], ["playoffs", "NFL playoffs"], ["bowl", "Bowl games"], ["cfp", "CFP"], ["post", "All postseason"]].map(([k, l]) => opt(k, l, v)).join("");
 const espnNote = ev => { const c = ((ev || {}).competitions || [])[0] || {}; return ((c.notes || [])[0] || {}).headline || ""; };
 const espnSeasonType = ev => ev && ((ev.seasonType && ev.seasonType.type) || (ev.season && ev.season.type));
 function levelLabel(e) { const l = (LEVELS[modeOf(e)] || []).find(x => x.v === e.level); return l ? l.label : ""; }
@@ -1911,7 +1914,7 @@ function primaryLine(p, side) {
 // ── Stats view ────────────────────────────────────────────────────────
 const SV = { tab: "leaders", side: "all", stage: "all", season: "all", level: "all", q: "", cmp: { a: { name: "", mode: "", season: "all" }, b: { name: "", mode: "", season: "all" } } };
 function seasonsIn(games) { return [...new Set(games.map(seasonOf).filter(Boolean))].sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); }
-function statsGames() { return modeGames().filter(e => (SV.season === "all" || seasonOf(e) === SV.season) && (SV.level === "all" || e.level === SV.level) && (SV.stage === "all" || (SV.stage === "post" ? stageOf(e) !== "reg" : stageOf(e) === SV.stage))); }
+function statsGames() { return modeGames().filter(e => (SV.season === "all" || seasonOf(e) === SV.season) && (SV.level === "all" || e.level === SV.level) && stageMatch(e, SV.stage)); }
 // Leader boards by side of the ball: [side, title, value(p), format, note]
 const SIDES = [["off", "🏈 Offense"], ["def", "🛡️ Defense"], ["st", "🦶 Special teams"]];
 const BOARDS = [
@@ -1947,7 +1950,7 @@ function renderStats() {
   if (!all.length) { el.innerHTML = '<div class="empty">Stats fill in as you log games with box scores or play-by-play.</div>'; return; }
   const seasons = seasonsIn(all);
   if (SV.season !== "all" && !seasons.includes(SV.season)) SV.season = "all";
-  let h = '<div class="controls"><select id="svSeason" class="inline">' + opt("all", "All seasons", SV.season) + seasons.map(s => opt(s, s, SV.season)).join("") + '</select><select id="svLevel" class="inline">' + opt("all", "All levels", SV.level) + LEVELS[appMode].map(l => opt(l.v, l.label, SV.level)).join("") + '</select><select id="svStage" class="inline">' + opt("all", "All games", SV.stage) + STAGES.map(st => opt(st.v, st.v === "reg" ? "Regular season" : st.v === "playoffs" ? "NFL playoffs" : st.v === "bowl" ? "Bowl games" : "CFP", SV.stage)).join("") + opt("post", "All postseason", SV.stage) + "</select></div>";
+  let h = '<div class="controls"><select id="svSeason" class="inline">' + opt("all", "All seasons", SV.season) + seasons.map(s => opt(s, s, SV.season)).join("") + '</select><select id="svLevel" class="inline">' + opt("all", "All levels", SV.level) + LEVELS[appMode].map(l => opt(l.v, l.label, SV.level)).join("") + '</select><select id="svStage" class="inline">' + stageOpts(SV.stage) + "</select></div>";
   h += '<div class="tabs">' + [["leaders", "Leaders"], ["players", "Players"], ["teams", "Teams"], ["compare", "Compare"]].map(([v, l]) => '<button class="tab' + (SV.tab === v ? " active" : "") + '" data-svt="' + v + '">' + l + "</button>").join("") + "</div><div id=\"svBody\"></div>";
   el.innerHTML = h;
   renderStatsBody();
@@ -2127,7 +2130,7 @@ function openPlayerPage(name) {
 }
 
 // ── Records ───────────────────────────────────────────────────────────
-let recTab = "game";
+let recTab = "game", recStage = "all";
 const NFL_TEAMS = ["arizona cardinals", "atlanta falcons", "baltimore ravens", "buffalo bills", "carolina panthers", "chicago bears", "cincinnati bengals", "cleveland browns", "dallas cowboys", "denver broncos", "detroit lions", "green bay packers", "houston texans", "indianapolis colts", "jacksonville jaguars", "kansas city chiefs", "las vegas raiders", "los angeles chargers", "los angeles rams", "miami dolphins", "minnesota vikings", "new england patriots", "new orleans saints", "new york giants", "new york jets", "philadelphia eagles", "pittsburgh steelers", "san francisco 49ers", "seattle seahawks", "tampa bay buccaneers", "tennessee titans", "washington commanders"];
 function gamePlayerLines(e) {
   // one combined line per player per game: { name, side, g: {group: stats} }
@@ -2146,6 +2149,12 @@ function renderRecords() {
   el.innerHTML = h;
   if (!gs.length) { $("recBody").innerHTML = '<div class="empty">Records build themselves from the games you log.</div>'; return; }
   const fn = { game: recGameBests, season: recSeasonBests, team: recTeam, there: recThere, firsts: recFirsts, prospects: recProspects, trophies: recTrophies, reviews: recReviews, miles: recMilestones }[recTab];
+  if (["game", "season", "team"].includes(recTab)) {
+    const sel = gs.filter(e => stageMatch(e, recStage));
+    const top = '<div class="controls"><select id="recStage" class="inline" aria-label="Which games">' + stageOpts(recStage) + "</select></div>";
+    $("recBody").innerHTML = top + (sel.length ? fn(sel) : '<div class="empty">No ' + ({ reg: "regular-season games", playoffs: "NFL playoff games", bowl: "bowl games", cfp: "CFP games", post: "postseason games" }[recStage]) + " logged yet.</div>");
+    return;
+  }
   $("recBody").innerHTML = fn(gs);
 }
 $("view-records").addEventListener("click", ev => {
@@ -2156,6 +2165,7 @@ $("view-records").addEventListener("click", ev => {
   else if (b.dataset.goto) { showView("games"); setTimeout(() => { const g = entries.find(x => x.id === b.dataset.goto); if (!g) return; $("search").value = ""; renderList(); const el = $("g_" + g.id); if (el) { el.closest("details").open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("flashpulse"); } }, 50); }
   else if (b.dataset.fdel) { aux.firsts = aux.firsts.filter(f => f.id !== b.dataset.fdel); persistAux(); renderRecords(); }
 });
+$("view-records").addEventListener("change", ev => { if (ev.target.id === "recStage") { recStage = ev.target.value; renderRecords(); } });
 $("view-records").addEventListener("input", ev => { if (ev.target.id === "fq") { const q = canonName(ev.target.value); document.querySelectorAll("#recBody [data-fname]").forEach(r => r.classList.toggle("hidden", !!q && !r.dataset.fname.includes(q))); } });
 function perfBoard(title, list, fmt, n) {
   if (!list.length) return "";
