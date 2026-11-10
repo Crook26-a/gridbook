@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -2372,8 +2372,8 @@ const ESPN_KEYS = {
   passing: { "completions/passingAttempts": ["CMP", "ATT"], passingYards: "YDS", passingTouchdowns: "TD", interceptions: "INT", "sacks-sackYardsLost": ["SCK", "SYL"] },
   rushing: { rushingAttempts: "CAR", rushingYards: "YDS", rushingTouchdowns: "TD", longRushing: "LNG" },
   receiving: { receptions: "REC", receivingTargets: "TGT", receivingYards: "YDS", receivingTouchdowns: "TD", longReception: "LNG" },
-  defensive: { totalTackles: "_TOT", soloTackles: "TKL", sacks: "SCK", tacklesForLoss: "TFL", passesDefended: "PD", QBHits: "QBH", defensiveTouchdowns: "DTD" },
-  interceptions: { interceptions: "INT", interceptionYards: "IYD", interceptionTouchdowns: "DTD" },
+  defensive: { totalTackles: "_TOT", soloTackles: "TKL", sacks: "SCK", tacklesForLoss: "TFL", passesDefended: "PD", QBHits: "QBH", defensiveTouchdowns: "_DEFTD" },
+  interceptions: { interceptions: "INT", interceptionYards: "IYD", interceptionTouchdowns: "_INTTD" },
   kickReturns: { kickReturns: "KR", kickReturnYards: "KYD", kickReturnTouchdowns: "RTD" },
   puntReturns: { puntReturns: "PR", puntReturnYards: "PYD", puntReturnTouchdowns: "RTD" },
   kicking: { "fieldGoalsMade/fieldGoalAttempts": ["FGM", "FGA"], longFieldGoalMade: "LNG", "extraPointsMade/extraPointAttempts": ["XPM", "XPA"] },
@@ -2389,7 +2389,7 @@ async function fetchEspnGame(lg, id) {
   const C = {}; for (const c of comp.competitors) C[c.homeAway] = c;
   const sideOfTeam = t => { if (!t) return null; for (const s of ["away", "home"]) if (C[s].team.id === t.id || C[s].team.displayName === t.displayName) return s; return null; };
   const g = blankGame();
-  Object.assign(g, { mode: "real", level: lg === "nfl" ? "pro" : "college", date: localDate(comp.date), away: C.away.team.displayName, home: C.home.team.displayName, as: num(C.away.score), hs: num(C.home.score), src: "espn:" + id, venue: "tv" });
+  Object.assign(g, { mode: "real", level: lg === "nfl" ? "pro" : "college", date: localDate(comp.date), away: C.away.team.displayName, home: C.home.team.displayName, as: num(C.away.score), hs: num(C.home.score), src: "espn:" + id, venue: "tv", tdFix: 1 });
   g.abbr = { away: C.away.team.abbreviation || "", home: C.home.team.abbreviation || "" };
   g.line = { away: (C.away.linescores || []).map(x => num(x.displayValue ?? x.value)), home: (C.home.linescores || []).map(x => num(x.displayValue ?? x.value)) };
   while (g.line.away.length < 4) g.line.away.push(""); while (g.line.home.length < 4) g.line.home.push("");
@@ -2397,7 +2397,7 @@ async function fetchEspnGame(lg, id) {
   if (gi.venue) g.place = gi.venue.fullName || "";
   if (gi.attendance) g.attend = gi.attendance;
   if (comp.season && comp.season.year) g.season = "";            // real games derive their season from the date
-  const rows = {};
+  const rows = {}, tds = {};
   const add = (side, group, name, col, v) => { const k = side + "|" + group + "|" + name; const r = rows[k] || (rows[k] = { group, team: side, player: name, stats: {} }); if (MAXCOLS.has(col)) r.stats[col] = Math.max(r.stats[col] ?? -999, v); else r.stats[col] = (r.stats[col] || 0) + v; };
   for (const tb of ((j.boxscore || {}).players || [])) {
     const side = sideOfTeam(tb.team); if (!side) continue;
@@ -2421,11 +2421,19 @@ async function fetchEspnGame(lg, id) {
           const target = km[k];
           if (Array.isArray(target)) { const [x, y] = pair(vals[k]); add(side, grp, name, target[0], x); add(side, grp, name, target[1], y); }
           else if (target === "_TOT") tot = num(vals[k]);
+          else if (target[0] === "_") { const t = tds[side + "|" + name] || (tds[side + "|" + name] = { side, name, def: 0, int: 0 }); t[target === "_DEFTD" ? "def" : "int"] += num(vals[k]); }
           else add(side, grp, name, target, num(vals[k]));
         }
         if (tot != null) { const solo = num(vals.soloTackles); add(side, "defense", name, "AST", Math.max(0, tot - solo)); }
       }
     }
+  }
+  // Defensive TDs: ESPN reports a pick-six under both "defensive" and "interceptions", and its defensive count can
+  // take in a kick or punt return TD. So: the larger of the pick-sixes and (defensive TDs minus that player's return TDs).
+  for (const t of Object.values(tds)) {
+    const ret = ((rows[t.side + "|returns|" + t.name] || {}).stats || {}).RTD || 0;
+    const v = Math.max(t.int, t.def - ret);
+    if (v > 0) add(t.side, "defense", t.name, "DTD", v);
   }
   g.box = Object.values(rows).filter(r => Object.values(r.stats).some(v => v));
   const tsMap = { firstDowns: "FD", totalYards: "TY", netPassingYards: "PY", rushingYards: "RY", totalOffensivePlays: "PLAYS", turnovers: "TO", possessionTime: "TOP" };
@@ -2824,7 +2832,30 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
   const d = lsGet("draft", null);
   if (d && d.id) { form = d; renderForm(); $("draftNote").classList.remove("hidden"); }
   renderList(); renderBackupStatus();
+  fixImportedTDs();
 })();
+
+// v9: games imported from ESPN before v9 counted a pick-six twice and could fold return TDs into defensive TDs.
+// Once, quietly, re-read just the defensive TDs of those games from ESPN (needs a connection; tries again next open if offline).
+async function fixImportedTDs() {
+  const todo = entries.filter(e => /^espn:/.test(e.src || "") && !e.tdFix);
+  if (!todo.length) return;
+  let changed = 0;
+  for (const e of todo) {
+    try {
+      const fresh = await fetchEspnGame(e.level === "college" ? "college-football" : "nfl", e.src.slice(5));
+      const want = {};
+      for (const r of fresh.box) if (r.group === "defense" && r.stats.DTD) want[r.team + "|" + canonName(r.player)] = r.stats.DTD;
+      for (const r of (e.box || [])) if (r.group === "defense") {
+        const v = want[r.team + "|" + canonName(r.player)] || 0;
+        if ((r.stats.DTD || 0) !== v) { if (v) r.stats.DTD = v; else delete r.stats.DTD; changed++; }
+      }
+      e.tdFix = 1;
+    } catch (err) { /* offline or ESPN hiccup: leave it for next time */ }
+  }
+  persist();
+  if (changed) { refreshLists(); renderList(); if (!$("view-stats").classList.contains("hidden")) renderStats(); if (!$("view-records").classList.contains("hidden")) renderRecords(); toast("Fixed defensive touchdowns in games imported from ESPN."); }
+}
 </script>
 </body>
 </html>
