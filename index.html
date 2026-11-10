@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v4";
+const APP_VERSION = "v5";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -1822,8 +1822,7 @@ function openEspnTeams() {
   const load = async () => {
     draw('<div class="hint">Loading teams…</div>');
     try {
-      const j = await espnJson(lg + "/teams" + (lg === "nfl" ? "" : "?limit=1000&groups=80"));
-      const teams = (((j.sports || [])[0] || {}).leagues || [])[0].teams.map(x => x.team).sort((a, b) => a.displayName.localeCompare(b.displayName));
+      const teams = await espnTeamList(lg);
       draw('<div class="llist" style="display:flex;flex-direction:column;gap:6px">' + teams.map(t => '<button class="vbtn" style="justify-content:flex-start" data-tid="' + esc(t.id) + '" data-name="' + esc(t.displayName) + '" data-abbr="' + esc(t.abbreviation || "") + '">' + esc(t.displayName) + "</button>").join("") + "</div>");
     } catch (e) { draw('<div class="err">Couldn\'t reach ESPN. Check your connection, or add the team by hand and paste its roster.</div>'); }
   };
@@ -2418,10 +2417,18 @@ async function fetchEspnGame(lg, id) {
 function footballSeason(d) { const x = d ? new Date(d) : new Date(); return x.getMonth() < 7 ? x.getFullYear() - 1 : x.getFullYear(); }
 const espnScore = s => (s && typeof s === "object") ? (s.displayValue ?? s.value ?? "") : (s ?? "");
 const espnTeamsCache = {};
+// Every NFL / FBS team. ESPN's /teams address won't answer a web page (no CORS header), so a phone's browser
+// blocks it; the standings do answer, and list every team (32 NFL, all of FBS).
 async function espnTeamList(lg) {
   if (espnTeamsCache[lg]) return espnTeamsCache[lg];
-  const j = await espnJson(lg + "/teams" + (lg === "nfl" ? "" : "?limit=1000&groups=80"));
-  return (espnTeamsCache[lg] = (((j.sports || [])[0] || {}).leagues || [])[0].teams.map(x => x.team).sort((a, b) => a.displayName.localeCompare(b.displayName)));
+  const r = await fetch("https://site.api.espn.com/apis/v2/sports/football/" + lg + "/standings" + (lg === "nfl" ? "" : "?group=80"), { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const j = await r.json(), seen = {};
+  const walk = o => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === "object") { if (o.team && o.team.id && o.team.displayName) seen[o.team.id] = o.team; Object.values(o).forEach(walk); } };
+  walk(j);
+  const list = Object.values(seen).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  if (!list.length) throw new Error("no teams");
+  return (espnTeamsCache[lg] = list);
 }
 // A team's whole season: regular season and postseason, in date order.
 async function espnTeamSeason(lg, tid, year) {
@@ -2460,7 +2467,9 @@ function openEspnImport() {
     if (by === "date") h += '<div style="display:flex;gap:8px;margin-bottom:10px"><input type="date" id="eiDate" value="' + date + '"><button class="savebtn disp" style="flex:none;padding:10px 16px" data-ei="find">Find games</button></div>';
     else {
       h += '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">';
-      h += teams ? '<select id="eiTeam" style="flex:1 1 180px"><option value="">Pick a team…</option>' + teams.map(t => '<option value="' + esc(t.id) + '"' + (t.id === tid ? " selected" : "") + ">" + esc(t.displayName) + "</option>").join("") + "</select>" : '<span class="hint" style="flex:1 1 180px;margin:0">Loading teams…</span>';
+      const cur = teams && teams.find(t => t.id === tid);
+      h += teams ? '<div style="flex:1 1 180px;position:relative"><input id="eiTeamQ" autocomplete="off" placeholder="Type or pick a team ▾" value="' + esc(cur ? cur.displayName : "") + '"><div id="eiTeamList" hidden style="position:absolute;left:0;right:0;top:100%;z-index:5;max-height:260px;overflow-y:auto;background:var(--card);border:1px solid var(--line);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.25)">' + teams.map(t => '<button class="linkish" style="display:block;width:100%;padding:10px 12px;text-decoration:none;border-bottom:1px solid var(--line)" data-tpick="' + esc(t.id) + '">' + esc(t.displayName) + "</button>").join("") + '<div id="eiTeamNone" class="hint" hidden style="margin:8px 12px">No team matches that.</div></div></div>'
+        : (msg && /team list/.test(msg) ? '<button class="vbtn" style="flex:1 1 180px" data-ei="retry">↻ Try again</button>' : '<span class="hint" style="flex:1 1 180px;margin:0">Loading teams…</span>');
       h += '<input type="number" id="eiYear" inputmode="numeric" min="2002" max="' + (footballSeason() + 1) + '" value="' + year + '" aria-label="Season" style="flex:0 0 90px">';
       h += '<button class="savebtn disp" style="flex:none;padding:10px 16px" data-ei="season">Show season</button></div>';
     }
@@ -2476,14 +2485,27 @@ function openEspnImport() {
     if (list) h += '<div style="display:flex;flex-direction:column;gap:6px">' + (list.map(ev => gameRow(ev, by === "team")).join("") || '<div class="hint">' + (by === "team" ? "No games found for that season." : "No games that day.") + "</div>") + "</div>";
     h += "</div>";
     const o = openOverlay(h);
-    o.onchange = ev => { if (ev.target.id === "eiTeam") { tid = ev.target.value; list = null; msg = ""; } if (ev.target.id === "eiYear") { year = num(ev.target.value) || year; list = null; msg = ""; } };
+    o.onchange = ev => { if (ev.target.id === "eiYear") { year = num(ev.target.value) || year; list = null; msg = ""; } };
+    // the team box: tap it for the whole list, type to narrow it down, tap a team to pick it
+    const showTeams = q => {
+      const box = $("eiTeamList"); if (!box) return;
+      q = canonName(q || ""); let n = 0;
+      box.querySelectorAll("[data-tpick]").forEach(x => { const hit = !q || canonName(x.textContent).includes(q); x.style.display = hit ? "block" : "none"; if (hit) n++; });
+      $("eiTeamNone").hidden = n > 0; box.hidden = false;
+    };
+    o.oninput = ev => { if (ev.target.id === "eiTeamQ") { tid = ""; list = null; showTeams(ev.target.value); } };
+    o.onkeydown = ev => { if (ev.target.id === "eiTeamQ" && ev.key === "Enter") { const first = [...o.querySelectorAll("[data-tpick]")].find(x => x.style.display !== "none"); if (first) { ev.preventDefault(); first.click(); } } };
     o.onclick = async ev => {
+      if (ev.target.id === "eiTeamQ") { const q = ev.target; if (tid) q.select(); showTeams(tid ? "" : q.value); return; }
+      if ($("eiTeamList") && !ev.target.closest("#eiTeamList")) $("eiTeamList").hidden = true;
       const b = ev.target.closest("button"); if (!b) return;
+      if (b.dataset.tpick) { tid = b.dataset.tpick; $("eiTeamQ").value = b.textContent; $("eiTeamList").hidden = true; list = null; msg = ""; return; }
       if (b.dataset.ei === "close") { if (busy && !confirm("Stop the season import? Games already brought in stay saved.")) return; busy = false; closeOverlay(); return; }
       if (busy) return;
-      const keep = () => { if ($("eiDate")) date = $("eiDate").value || date; if ($("eiYear")) year = num($("eiYear").value) || year; if ($("eiTeam")) tid = $("eiTeam").value; };
+      const keep = () => { if ($("eiDate")) date = $("eiDate").value || date; if ($("eiYear")) year = num($("eiYear").value) || year; };
       if (b.dataset.by) { keep(); by = b.dataset.by; lsSet("importBy", by); list = null; msg = ""; draw(); if (by === "team" && !teams) loadTeams(); return; }
       if (b.dataset.lg) { keep(); if (lg !== b.dataset.lg) { tid = ""; teams = null; } lg = b.dataset.lg; list = null; msg = ""; draw(); if (by === "team" && !teams) loadTeams(); return; }
+      if (b.dataset.ei === "retry") { msg = ""; draw(); loadTeams(); return; }
       if (b.dataset.ivenue) { venue = b.dataset.ivenue; draw(); return; }
       if (b.dataset.ei === "find") {
         date = $("eiDate").value || today(); msg = "Looking…"; list = null; draw();
@@ -2492,7 +2514,9 @@ function openEspnImport() {
         draw(); return;
       }
       if (b.dataset.ei === "season") {
-        keep(); if (!tid) { msg = "Pick a team first."; draw(); return; }
+        keep();
+        if (!tid && $("eiTeamQ")) { const q = canonName($("eiTeamQ").value), m = q ? teams.filter(t => canonName(t.displayName).includes(q)) : []; if (m.length === 1) tid = m[0].id; }   // typed enough to mean one team
+        if (!tid) { msg = "Pick a team first: tap the team box and choose one."; draw(); return; }
         const name = (teams.find(t => t.id === tid) || {}).displayName || "That team";
         msg = "Looking up " + name + "'s " + year + " season…"; list = null; draw();
         try { list = await espnTeamSeason(lg, tid, year); msg = list.length ? name + ", " + year + ": " + plural(list.length, "game") + "." : ""; }
@@ -2523,8 +2547,8 @@ function openEspnImport() {
     };
   };
   const loadTeams = async () => {
-    try { teams = await espnTeamList(lg); }
-    catch (e) { teams = []; msg = "Couldn't load the team list from ESPN — check your connection and try again."; }
+    try { teams = await espnTeamList(lg); if (/team list/.test(msg)) msg = ""; }
+    catch (e) { teams = null; msg = "Couldn't load the team list from ESPN (" + (e.message || "error") + "). Check your connection, then tap Try again."; }
     if (by === "team" && !busy) draw();
   };
   draw();
