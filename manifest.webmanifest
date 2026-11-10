@@ -2,6 +2,7 @@
   "name": "My Gridbook",
   "short_name": "Gridbook",
   "description": "A football scorebook for real games and video games.",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

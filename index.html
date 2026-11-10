@@ -267,6 +267,7 @@
       </div>
     </div>
     <div id="tally"></div>
+    <div id="install" hidden style="margin-top:10px;padding:9px 11px;border:1px dashed var(--line);border-radius:4px;font-size:14px"></div>
   </header>
   <div class="modebar">
     <button class="modebtn disp active" data-mode="real">🏈 Real games</button>
@@ -317,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v2";
+const APP_VERSION = "v3";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -2615,6 +2616,28 @@ $("levelFilter").addEventListener("change", renderList);
 $("search").addEventListener("input", renderList);
 window.addEventListener("beforeunload", ev => { if (form) { saveDraft(); if (formDirty()) { ev.preventDefault(); ev.returnValue = ""; } } });
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !$("overlay").classList.contains("hidden") && !$("liveRoot")) { closeOverlay(); if (form) renderForm(); } });
+
+// ── Getting it onto the home screen as a real app, not a browser shortcut ──
+// Android: Chrome's install offer becomes a button; with no offer yet (or inside another app's browser) the button
+// gives the steps. iPhone never offers, so say how (Share → Add to Home Screen). Hidden once running installed.
+const installed = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+let installEvt = null;
+function showInstall() {
+  const box = $("install"); if (!box) return;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (installed()) { box.hidden = true; return; }
+  const row = `<div style="display:flex;align-items:center;gap:8px"><span style="flex:1">Put Gridbook on your home screen as an app; it works offline.</span><button class="vbtn" id="installBtn">Download the app</button></div>`;
+  if (installEvt) { box.innerHTML = row; box.hidden = false;
+    $("installBtn").onclick = async () => { const e = installEvt; installEvt = null; e.prompt(); try { await e.userChoice; } catch (err) {} showInstall(); }; return; }
+  if (ios) { box.innerHTML = `To put Gridbook on your home screen: tap <b>Share</b> <span aria-hidden="true">⬆︎</span> (at the bottom in Safari, or by the address bar in Chrome), then <b>Add to Home Screen</b>, and leave <b>Open as Web App</b> on. If there's no Share button, you're in another app's browser: open this page in Safari first.`; box.hidden = false; return; }
+  if (!/Android/i.test(navigator.userAgent)) { box.hidden = true; return; }
+  box.innerHTML = row + `<div id="installHow" hidden style="margin-top:8px"></div>`; box.hidden = false;
+  $("installBtn").onclick = () => { const h = $("installHow"); h.hidden = !h.hidden;
+    h.innerHTML = `In Chrome, tap <b>⋮</b> (top right), then <b>Add to home screen</b> → <b>Install</b> (not "Create shortcut"). If it only offers a shortcut, reload this page once and try again: the app has to finish loading for offline first.<br>No ⋮ menu with that, or a plain X at the top left? You're in another app's browser: tap its menu and <b>Open in Chrome</b>, then do the above.`; };
+}
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; showInstall(); });
+window.addEventListener("appinstalled", () => { installEvt = null; showInstall(); toast("Gridbook is on your home screen."); });
+showInstall();
 
 // ── Service worker (offline + home-screen app) ───────────────────────
 if ("serviceWorker" in navigator && location.protocol === "https:") {
