@@ -318,7 +318,7 @@
 <script>
 "use strict";
 // App version shown in the top-right badge — bump together with the sw.js CACHE version on every ship.
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 const LS = "gridbook-";            // every localStorage key is prefixed, so this app never collides with the baseball scorebook on the same site
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -2151,6 +2151,7 @@ function renderRecords() {
 $("view-records").addEventListener("click", ev => {
   const b = ev.target.closest("button"); if (!b) return;
   if (b.dataset.rt) { recTab = b.dataset.rt; renderRecords(); }
+  else if (b.dataset.recside) { recSide = b.dataset.recside; renderRecords(); }
   else if (b.dataset.pp) openPlayerPage(b.dataset.pp);
   else if (b.dataset.goto) { showView("games"); setTimeout(() => { const g = entries.find(x => x.id === b.dataset.goto); if (!g) return; $("search").value = ""; renderList(); const el = $("g_" + g.id); if (el) { el.closest("details").open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("flashpulse"); } }, 50); }
   else if (b.dataset.fdel) { aux.firsts = aux.firsts.filter(f => f.id !== b.dataset.fdel); persistAux(); renderRecords(); }
@@ -2160,35 +2161,59 @@ function perfBoard(title, list, fmt, n) {
   if (!list.length) return "";
   return '<div class="lbtable"><div class="lbhead">' + esc(title) + "</div>" + list.slice(0, n || 5).map((r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.name) + '">' + esc(r.name) + '</button> <button class="linkish sub" data-goto="' + r.gid + '">' + esc(r.sub) + '</button></span><span class="v">' + esc(fmt ? fmt(r.v) : r.v) + "</span></div>").join("") + "</div>";
 }
+// Records' player lists split by side of the ball, like Stats: [side, title, value(p), format]
+let recSide = "all";
+function recSidePick() { return '<div class="pick" style="margin-bottom:8px">' + [["all", "All"]].concat(SIDES).map(([v, l]) => '<button data-recside="' + v + '" class="' + (recSide === v ? "on" : "") + '">' + l + "</button>").join("") + "</div>"; }
+function recBySide(defs, boardFor) {
+  let h = recSidePick();
+  for (const [side, label] of SIDES) {
+    if (recSide !== "all" && recSide !== side) continue;
+    let part = "";
+    for (const d of defs) if (d[0] === side) part += boardFor(d);
+    h += '<h3 class="disp" style="margin:14px 0 6px;font-size:17px">' + label + "</h3>" + (part || '<div class="hint">No ' + label.replace(/^\S+\s/, "").toLowerCase() + " stats in these games yet.</div>");
+  }
+  return h;
+}
+const LNG = (g, c) => p => (p.g[g] && p.g[g][c] != null) ? PG(p, g, c) : null;
 function recGameBests(gs) {
   const defs = [
-    ["Passing yards", p => PG(p, "passing", "YDS")], ["Passing TDs", p => PG(p, "passing", "TD")], ["Rushing yards", p => PG(p, "rushing", "YDS")], ["Rushing TDs", p => PG(p, "rushing", "TD")],
-    ["Receptions", p => PG(p, "receiving", "REC")], ["Receiving yards", p => PG(p, "receiving", "YDS")], ["Receiving TDs", p => PG(p, "receiving", "TD")],
-    ["Scrimmage yards", p => p.SCRIM], ["Total touchdowns", p => p.TOTTD], ["Fantasy points", p => p.FPTS, f1],
-    ["Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST")], ["Sacks", p => PG(p, "defense", "SCK")], ["Interceptions", p => PG(p, "defense", "INT")],
-    ["Longest run", p => (p.g.rushing && p.g.rushing.LNG != null) ? PG(p, "rushing", "LNG") : null], ["Longest catch", p => (p.g.receiving && p.g.receiving.LNG != null) ? PG(p, "receiving", "LNG") : null],
-    ["Longest field goal", p => PG(p, "kicking", "LNG")], ["Field goals made", p => PG(p, "kicking", "FGM")], ["Longest punt", p => PG(p, "punting", "LNG")], ["Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")],
+    ["off", "Passing yards", p => PG(p, "passing", "YDS")], ["off", "Passing TDs", p => PG(p, "passing", "TD")], ["off", "Most interceptions thrown", p => PG(p, "passing", "INT")],
+    ["off", "Rushing yards", p => PG(p, "rushing", "YDS")], ["off", "Rushing TDs", p => PG(p, "rushing", "TD")], ["off", "Longest run", LNG("rushing", "LNG")],
+    ["off", "Receptions", p => PG(p, "receiving", "REC")], ["off", "Receiving yards", p => PG(p, "receiving", "YDS")], ["off", "Receiving TDs", p => PG(p, "receiving", "TD")], ["off", "Longest catch", LNG("receiving", "LNG")],
+    ["off", "Scrimmage yards", p => p.SCRIM], ["off", "Total touchdowns", p => p.TOTTD], ["off", "Most fumbles", p => PG(p, "rushing", "FUM")], ["off", "Fantasy points", p => p.FPTS, f1],
+    ["def", "Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST")], ["def", "Sacks", p => PG(p, "defense", "SCK")], ["def", "Tackles for loss", p => PG(p, "defense", "TFL")],
+    ["def", "Interceptions", p => PG(p, "defense", "INT")], ["def", "Passes defended", p => PG(p, "defense", "PD")],
+    ["def", "Forced fumbles", p => PG(p, "defense", "FF")], ["def", "Fumbles recovered", p => PG(p, "defense", "FR")], ["def", "Defensive touchdowns", p => PG(p, "defense", "DTD")],
+    ["st", "Longest field goal", p => PG(p, "kicking", "LNG")], ["st", "Field goals made", p => PG(p, "kicking", "FGM")], ["st", "Longest punt", p => PG(p, "punting", "LNG")],
+    ["st", "Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")], ["st", "Return touchdowns", p => PG(p, "returns", "RTD")],
   ];
   const all = [];
   for (const e of gs) for (const p of gamePlayerLines(e)) all.push({ e, p });
-  let h = '<div class="hint">Single-game highs from every game you logged. Tap a name for his page, the date to jump to the game.</div>';
-  for (const [t, f, fmt] of defs) {
-    const list = all.map(({ e, p }) => ({ name: p.name, v: f(p), gid: e.id, sub: teamAbbr(e, p.side) + " · " + fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v);
-    h += perfBoard(t, list, fmt);
-  }
-  return h;
+  const h = '<div class="hint">Single-game highs from every game you logged. Tap a name for his page, the date to jump to the game.</div>';
+  return h + recBySide(defs, ([, t, f, fmt]) => perfBoard(t, all.map(({ e, p }) => ({ name: p.name, v: f(p), gid: e.id, sub: teamAbbr(e, p.side) + " · " + fmtDate(e.date, true) + " " + (p.side === "away" ? "@ " : "vs ") + teamAbbr(e, other(p.side)) })).filter(r => r.v != null && r.v > 0).sort((a, b) => b.v - a.v), fmt));
 }
 function recSeasonBests(gs) {
   const by = {};
   for (const e of gs) { const s = seasonOf(e) || "—"; (by[s] = by[s] || []).push(e); }
   const all = [];
   for (const s in by) for (const p of aggregatePlayers(by[s], { manual: appMode === "video", season: s })) all.push({ s, p });
-  const defs = [["Passing yards", p => PG(p, "passing", "YDS")], ["Passing TDs", p => PG(p, "passing", "TD")], ["Rushing yards", p => PG(p, "rushing", "YDS")], ["Receiving yards", p => PG(p, "receiving", "YDS")], ["Receptions", p => PG(p, "receiving", "REC")], ["Scrimmage yards", p => p.SCRIM], ["Total touchdowns", p => p.TOTTD], ["Sacks", p => PG(p, "defense", "SCK")], ["Interceptions", p => PG(p, "defense", "INT")], ["Games seen", p => p.G]];
-  let h = '<div class="hint">Best single seasons, counting only the games you logged' + (appMode === "video" ? " plus season lines you typed in" : "") + ".</div>";
-  for (const [t, f] of defs) {
+  const defs = [
+    ["off", "Passing yards", p => PG(p, "passing", "YDS")], ["off", "Passing TDs", p => PG(p, "passing", "TD")], ["off", "Most interceptions thrown", p => PG(p, "passing", "INT")],
+    ["off", "Rushing yards", p => PG(p, "rushing", "YDS")], ["off", "Rushing TDs", p => PG(p, "rushing", "TD")],
+    ["off", "Receptions", p => PG(p, "receiving", "REC")], ["off", "Receiving yards", p => PG(p, "receiving", "YDS")], ["off", "Receiving TDs", p => PG(p, "receiving", "TD")],
+    ["off", "Scrimmage yards", p => p.SCRIM], ["off", "Total touchdowns", p => p.TOTTD], ["off", "Most fumbles", p => PG(p, "rushing", "FUM")],
+    ["def", "Tackles", p => PG(p, "defense", "TKL") + PG(p, "defense", "AST")], ["def", "Sacks", p => PG(p, "defense", "SCK")], ["def", "Tackles for loss", p => PG(p, "defense", "TFL")],
+    ["def", "Interceptions", p => PG(p, "defense", "INT")], ["def", "Forced fumbles", p => PG(p, "defense", "FF")], ["def", "Fumbles recovered", p => PG(p, "defense", "FR")], ["def", "Defensive touchdowns", p => PG(p, "defense", "DTD")],
+    ["st", "Field goals made", p => PG(p, "kicking", "FGM")], ["st", "Extra points made", p => PG(p, "kicking", "XPM")], ["st", "Punts", p => PG(p, "punting", "PUNT")],
+    ["st", "Return yards", p => PG(p, "returns", "KYD") + PG(p, "returns", "PYD")], ["st", "Return touchdowns", p => PG(p, "returns", "RTD")],
+  ];
+  const board = (t, f) => {
     const list = all.map(({ s, p }) => ({ name: p.name, v: f(p), sub: (teamsLabel(p) ? teamsLabel(p) + " · " : "") + s + " · " + p.G + " G" })).filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 5);
-    if (list.length) h += '<div class="lbtable"><div class="lbhead">' + t + "</div>" + list.map((r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.name) + '">' + esc(r.name) + '</button> <span class="sub">' + esc(r.sub) + '</span></span><span class="v">' + r.v + "</span></div>").join("") + "</div>";
-  }
+    return list.length ? '<div class="lbtable"><div class="lbhead">' + t + "</div>" + list.map((r, i) => '<div class="lbrow"><span class="rk">' + (i + 1) + '</span><span class="nm"><button class="linkish" data-pp="' + esc(r.name) + '">' + esc(r.name) + '</button> <span class="sub">' + esc(r.sub) + '</span></span><span class="v">' + r.v + "</span></div>").join("") + "</div>" : "";
+  };
+  let h = '<div class="hint">Best single seasons, counting only the games you logged' + (appMode === "video" ? " plus season lines you typed in" : "") + ".</div>";
+  h += recBySide(defs, ([, t, f]) => board(t, f));
+  if (recSide === "all") h += '<h3 class="disp" style="margin:14px 0 6px;font-size:17px">👀 Everyone</h3>' + board("Games seen", p => p.G);
   return h;
 }
 function cumDeficit(e) {
